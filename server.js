@@ -10,29 +10,45 @@ const PORT = process.env.PORT || 3000;
 // Pool till Postgres – Render sätter DATABASE_URL i env
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
+  ssl:
+    process.env.NODE_ENV === "production"
+      ? { rejectUnauthorized: false }
+      : false,
 });
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// Skapa tabell om den inte finns (körs vid start)
+/**
+ * Skapa / uppdatera tabellen "notes" om något saknas.
+ * - Första gången skapas tabellen enkelt.
+ * - Om den redan finns men saknar t.ex. "color" så läggs kolumnen till.
+ */
 async function ensureTable() {
   const sql = `
+    -- Grundtabell (äldre versioner hade bara dessa kolumner)
     CREATE TABLE IF NOT EXISTS notes (
       id UUID PRIMARY KEY,
       message_id TEXT NOT NULL,
       text TEXT NOT NULL,
-      tag_name TEXT,
-      tag_color TEXT NOT NULL DEFAULT '#a855f7',
-      snippet_key TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Nyare kolumner, läggs till om de saknas
+    ALTER TABLE notes
+      ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT 'yellow';
+
+    ALTER TABLE notes
+      ADD COLUMN IF NOT EXISTS snippet_key TEXT;
+
+    ALTER TABLE notes
+      ADD COLUMN IF NOT EXISTS created_by TEXT;
+
     CREATE INDEX IF NOT EXISTS idx_notes_message_id ON notes(message_id);
   `;
+
   await pool.query(sql);
-  console.log("notes-tabellen finns / är skapad.");
+  console.log("notes-tabellen finns / är uppdaterad.");
 }
 
 // Hämta notes för en tråd
@@ -49,14 +65,14 @@ app.get("/notes", async (req, res) => {
         id,
         message_id,
         text,
-        tag_name,
-        tag_color,
+        color,
         snippet_key,
+        created_by,
         created_at
       FROM notes
       WHERE message_id = $1
       ORDER BY created_at ASC
-      `,
+    `,
       [messageId]
     );
 
@@ -64,10 +80,10 @@ app.get("/notes", async (req, res) => {
       id: row.id,
       messageId: row.message_id,
       text: row.text,
-      tagName: row.tag_name,
-      tagColor: row.tag_color,
+      color: row.color,
       snippetKey: row.snippet_key,
-      createdAt: row.created_at
+      createdBy: row.created_by,
+      createdAt: row.created_at,
     }));
 
     res.json({ notes });
@@ -79,34 +95,39 @@ app.get("/notes", async (req, res) => {
 
 // Skapa note
 app.post("/notes", async (req, res) => {
-  const { messageId, text, tagName, tagColor, snippetKey } = req.body;
+  const { messageId, text, color, snippetKey, createdBy } = req.body;
 
   if (!messageId || !text) {
-    return res.status(400).json({ error: "messageId and text are required" });
+    return res
+      .status(400)
+      .json({ error: "messageId and text are required" });
   }
 
   const id = uuidv4();
-
-  // Standardvärden om frontend skickar tomt
-  const finalTagName = tagName || "Okänd";
-  // Lila standard (#a855f7 – samma som Billy i frontenden om du vill)
-  const finalTagColor = tagColor || "#a855f7";
+  const finalColor = color || "yellow";
 
   try {
     const result = await pool.query(
       `
-      INSERT INTO notes (id, message_id, text, tag_name, tag_color, snippet_key)
+      INSERT INTO notes (
+        id,
+        message_id,
+        text,
+        color,
+        snippet_key,
+        created_by
+      )
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING
         id,
         message_id,
         text,
-        tag_name,
-        tag_color,
+        color,
         snippet_key,
+        created_by,
         created_at
-      `,
-      [id, messageId, text, finalTagName, finalTagColor, snippetKey || null]
+    `,
+      [id, messageId, text, finalColor, snippetKey || null, createdBy || "okänd"]
     );
 
     const row = result.rows[0];
@@ -115,10 +136,10 @@ app.post("/notes", async (req, res) => {
       id: row.id,
       messageId: row.message_id,
       text: row.text,
-      tagName: row.tag_name,
-      tagColor: row.tag_color,
+      color: row.color,
       snippetKey: row.snippet_key,
-      createdAt: row.created_at
+      createdBy: row.created_by,
+      createdAt: row.created_at,
     };
 
     res.status(201).json({ note });
