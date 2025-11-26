@@ -23,9 +23,9 @@ async function ensureTable() {
       id UUID PRIMARY KEY,
       message_id TEXT NOT NULL,
       text TEXT NOT NULL,
-      color TEXT NOT NULL DEFAULT 'yellow',
+      tag_name TEXT,
+      tag_color TEXT NOT NULL DEFAULT '#a855f7',
       snippet_key TEXT,
-      created_by TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -44,7 +44,19 @@ app.get("/notes", async (req, res) => {
 
   try {
     const result = await pool.query(
-      "SELECT id, message_id, text, color, snippet_key, created_by, created_at FROM notes WHERE message_id = $1 ORDER BY created_at ASC",
+      `
+      SELECT
+        id,
+        message_id,
+        text,
+        tag_name,
+        tag_color,
+        snippet_key,
+        created_at
+      FROM notes
+      WHERE message_id = $1
+      ORDER BY created_at ASC
+      `,
       [messageId]
     );
 
@@ -52,9 +64,9 @@ app.get("/notes", async (req, res) => {
       id: row.id,
       messageId: row.message_id,
       text: row.text,
-      color: row.color,
+      tagName: row.tag_name,
+      tagColor: row.tag_color,
       snippetKey: row.snippet_key,
-      createdBy: row.created_by,
       createdAt: row.created_at
     }));
 
@@ -67,19 +79,34 @@ app.get("/notes", async (req, res) => {
 
 // Skapa note
 app.post("/notes", async (req, res) => {
-  const { messageId, text, color, snippetKey, createdBy } = req.body;
+  const { messageId, text, tagName, tagColor, snippetKey } = req.body;
 
   if (!messageId || !text) {
     return res.status(400).json({ error: "messageId and text are required" });
   }
 
   const id = uuidv4();
-  const finalColor = color || "yellow";
+
+  // Standardvärden om frontend skickar tomt
+  const finalTagName = tagName || "Okänd";
+  // Lila standard (#a855f7 – samma som Billy i frontenden om du vill)
+  const finalTagColor = tagColor || "#a855f7";
 
   try {
     const result = await pool.query(
-      "INSERT INTO notes (id, message_id, text, color, snippet_key, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, message_id, text, color, snippet_key, created_by, created_at",
-      [id, messageId, text, finalColor, snippetKey || null, createdBy || "okänd"]
+      `
+      INSERT INTO notes (id, message_id, text, tag_name, tag_color, snippet_key)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING
+        id,
+        message_id,
+        text,
+        tag_name,
+        tag_color,
+        snippet_key,
+        created_at
+      `,
+      [id, messageId, text, finalTagName, finalTagColor, snippetKey || null]
     );
 
     const row = result.rows[0];
@@ -88,9 +115,9 @@ app.post("/notes", async (req, res) => {
       id: row.id,
       messageId: row.message_id,
       text: row.text,
-      color: row.color,
+      tagName: row.tag_name,
+      tagColor: row.tag_color,
       snippetKey: row.snippet_key,
-      createdBy: row.created_by,
       createdAt: row.created_at
     };
 
@@ -101,7 +128,7 @@ app.post("/notes", async (req, res) => {
   }
 });
 
-// 🔴 Ta bort note (det som saknas nu)
+// Ta bort note
 app.delete("/notes/:id", async (req, res) => {
   const { id } = req.params;
 
