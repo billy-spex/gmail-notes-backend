@@ -7,7 +7,7 @@ const { Pool } = require("pg");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Pool till Postgres – Render ger DATABASE_URL i env
+// Pool till Postgres – Render sätter DATABASE_URL i env
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
@@ -16,7 +16,7 @@ const pool = new Pool({
 app.use(cors());
 app.use(bodyParser.json());
 
-// Skapa tabell om den inte finns (körs automatiskt vid start)
+// Skapa tabell om den inte finns (körs vid start)
 async function ensureTable() {
   const sql = `
     CREATE TABLE IF NOT EXISTS notes (
@@ -35,7 +35,7 @@ async function ensureTable() {
   console.log("notes-tabellen finns / är skapad.");
 }
 
-// Hämta notes för ett specifikt messageId
+// Hämta notes för en tråd
 app.get("/notes", async (req, res) => {
   const messageId = req.query.messageId;
   if (!messageId) {
@@ -65,7 +65,7 @@ app.get("/notes", async (req, res) => {
   }
 });
 
-// Skapa en ny note
+// Skapa note
 app.post("/notes", async (req, res) => {
   const { messageId, text, color, snippetKey, createdBy } = req.body;
 
@@ -101,7 +101,7 @@ app.post("/notes", async (req, res) => {
   }
 });
 
-// Ta bort en note
+// 🔴 Ta bort note (det som saknas nu)
 app.delete("/notes/:id", async (req, res) => {
   const { id } = req.params;
 
@@ -114,7 +114,7 @@ app.delete("/notes/:id", async (req, res) => {
   }
 });
 
-// Starta servern först när tabellens struktur är fixad
+// Starta servern när tabellen är klar
 ensureTable()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
