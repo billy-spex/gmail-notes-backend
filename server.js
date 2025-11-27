@@ -21,12 +21,9 @@ app.use(bodyParser.json());
 
 /**
  * Skapa / uppdatera tabellen "notes" om något saknas.
- * - Första gången skapas tabellen enkelt.
- * - Om den redan finns men saknar t.ex. "color" så läggs kolumnen till.
  */
 async function ensureTable() {
   const sql = `
-    -- Grundtabell (äldre versioner hade bara dessa kolumner)
     CREATE TABLE IF NOT EXISTS notes (
       id UUID PRIMARY KEY,
       message_id TEXT NOT NULL,
@@ -34,7 +31,6 @@ async function ensureTable() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Nyare kolumner, läggs till om de saknas
     ALTER TABLE notes
       ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT 'yellow';
 
@@ -51,7 +47,44 @@ async function ensureTable() {
   console.log("notes-tabellen finns / är uppdaterad.");
 }
 
+// ----------------------------------------------------------
+// 🔍 NY ENDPOINT: LISTA ALLA NOTES (för felsökning)
+// ----------------------------------------------------------
+app.get("/notes-all", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        id,
+        message_id,
+        text,
+        color,
+        snippet_key,
+        created_by,
+        created_at
+      FROM notes
+      ORDER BY created_at DESC
+    `);
+
+    const notes = result.rows.map((row) => ({
+      id: row.id,
+      messageId: row.message_id,
+      text: row.text,
+      color: row.color,
+      snippetKey: row.snippet_key,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+    }));
+
+    res.json(notes);
+  } catch (err) {
+    console.error("Fel vid GET /notes-all:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ----------------------------------------------------------
 // Hämta notes för en tråd
+// ----------------------------------------------------------
 app.get("/notes", async (req, res) => {
   const messageId = req.query.messageId;
   if (!messageId) {
@@ -86,14 +119,17 @@ app.get("/notes", async (req, res) => {
       createdAt: row.created_at,
     }));
 
-    res.json({ notes });
+    // 🔥 Matchar ditt script → returnera *arrayen direkt*
+    res.json(notes);
   } catch (err) {
     console.error("Fel vid GET /notes:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
+// ----------------------------------------------------------
 // Skapa note
+// ----------------------------------------------------------
 app.post("/notes", async (req, res) => {
   const { messageId, text, color, snippetKey, createdBy } = req.body;
 
@@ -142,14 +178,16 @@ app.post("/notes", async (req, res) => {
       createdAt: row.created_at,
     };
 
-    res.status(201).json({ note });
+    res.status(201).json(note);
   } catch (err) {
     console.error("Fel vid POST /notes:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
+// ----------------------------------------------------------
 // Ta bort note
+// ----------------------------------------------------------
 app.delete("/notes/:id", async (req, res) => {
   const { id } = req.params;
 
@@ -162,7 +200,9 @@ app.delete("/notes/:id", async (req, res) => {
   }
 });
 
-// Starta servern när tabellen är klar
+// ----------------------------------------------------------
+// Starta servern
+// ----------------------------------------------------------
 ensureTable()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
