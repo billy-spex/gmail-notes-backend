@@ -20,7 +20,7 @@ app.use(cors());
 app.use(bodyParser.json());
 
 /**
- * Skapa / uppdatera tabellen "notes" om något saknas.
+ * Skapa / uppdatera tabellen "notes".
  */
 async function ensureTable() {
   const sql = `
@@ -28,17 +28,11 @@ async function ensureTable() {
       id UUID PRIMARY KEY,
       message_id TEXT NOT NULL,
       text TEXT NOT NULL,
+      color TEXT,
+      snippet_key TEXT,
+      created_by TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-
-    ALTER TABLE notes
-      ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT 'yellow';
-
-    ALTER TABLE notes
-      ADD COLUMN IF NOT EXISTS snippet_key TEXT;
-
-    ALTER TABLE notes
-      ADD COLUMN IF NOT EXISTS created_by TEXT;
 
     CREATE INDEX IF NOT EXISTS idx_notes_message_id ON notes(message_id);
   `;
@@ -47,49 +41,34 @@ async function ensureTable() {
   console.log("notes-tabellen finns / är uppdaterad.");
 }
 
-// ----------------------------------------------------------
-// 🔍 NY ENDPOINT: LISTA ALLA NOTES (för felsökning)
-// ----------------------------------------------------------
-app.get("/notes-all", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT 
-        id,
-        message_id,
-        text,
-        color,
-        snippet_key,
-        created_by,
-        created_at
-      FROM notes
-      ORDER BY created_at DESC
-    `);
+///////////////////////////////////////////////////////////////////////////////
+// SANERA MESSAGE-ID (superviktigt!)
+///////////////////////////////////////////////////////////////////////////////
+function cleanMessageId(id) {
+  if (!id) return "";
 
-    const notes = result.rows.map((row) => ({
-      id: row.id,
-      messageId: row.message_id,
-      text: row.text,
-      color: row.color,
-      snippetKey: row.snippet_key,
-      createdBy: row.created_by,
-      createdAt: row.created_at,
-    }));
+  let msg = id.trim();
 
-    res.json(notes);
-  } catch (err) {
-    console.error("Fel vid GET /notes-all:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+  // Ta bort BOM och zero-width stuff
+  msg = msg.replace(/\u200B/g, "");   // Zero width
+  msg = msg.replace(/\uFEFF/g, "");   // BOM marker
 
-// ----------------------------------------------------------
-// Hämta notes för en tråd
-// ----------------------------------------------------------
+  // Ta bort ev inledande # (Gmail gör så ibland)
+  if (msg.startsWith("#")) msg = msg.slice(1);
+
+  return msg.trim();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// GET /notes — HÄMTA NOTE-HISTORIK
+///////////////////////////////////////////////////////////////////////////////
 app.get("/notes", async (req, res) => {
-  const messageId = req.query.messageId;
+  let messageId = req.query.messageId;
   if (!messageId) {
     return res.status(400).json({ error: "messageId is required" });
   }
+
+  messageId = cleanMessageId(messageId);
 
   try {
     const result = await pool.query(
@@ -103,7 +82,7 @@ app.get("/notes", async (req, res) => {
         created_by,
         created_at
       FROM notes
-      WHERE message_id = $1
+      WHERE TRIM(message_id) = TRIM($1)
       ORDER BY created_at ASC
     `,
       [messageId]
@@ -119,28 +98,27 @@ app.get("/notes", async (req, res) => {
       createdAt: row.created_at,
     }));
 
-    // 🔥 Matchar ditt script → returnera *arrayen direkt*
-    res.json(notes);
+    res.json({ notes });
   } catch (err) {
     console.error("Fel vid GET /notes:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// ----------------------------------------------------------
-// Skapa note
-// ----------------------------------------------------------
+///////////////////////////////////////////////////////////////////////////////
+// POST /notes — SKAPA NOTE
+///////////////////////////////////////////////////////////////////////////////
 app.post("/notes", async (req, res) => {
-  const { messageId, text, color, snippetKey, createdBy } = req.body;
+  let { messageId, text, color, snippetKey, createdBy } = req.body;
 
   if (!messageId || !text) {
-    return res
-      .status(400)
-      .json({ error: "messageId and text are required" });
+    return res.status(400).json({ error: "messageId and text are required" });
   }
 
+  messageId = cleanMessageId(messageId);
+
   const id = uuidv4();
-  const finalColor = color || "yellow";
+  const finalColor = color || "#ffffaa";
 
   try {
     const result = await pool.query(
@@ -178,16 +156,16 @@ app.post("/notes", async (req, res) => {
       createdAt: row.created_at,
     };
 
-    res.status(201).json(note);
+    res.status(201).json({ note });
   } catch (err) {
     console.error("Fel vid POST /notes:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// ----------------------------------------------------------
-// Ta bort note
-// ----------------------------------------------------------
+///////////////////////////////////////////////////////////////////////////////
+// DELETE /notes/:id — TA BORT NOTE
+///////////////////////////////////////////////////////////////////////////////
 app.delete("/notes/:id", async (req, res) => {
   const { id } = req.params;
 
@@ -200,9 +178,9 @@ app.delete("/notes/:id", async (req, res) => {
   }
 });
 
-// ----------------------------------------------------------
-// Starta servern
-// ----------------------------------------------------------
+///////////////////////////////////////////////////////////////////////////////
+// STARTA SERVER
+///////////////////////////////////////////////////////////////////////////////
 ensureTable()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
